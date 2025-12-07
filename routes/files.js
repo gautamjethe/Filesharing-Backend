@@ -205,43 +205,46 @@ router.post('/:fileId/share', authenticate, checkFileAccess, async (req, res) =>
                 continue;
             }
 
+            const expiresAtValue = expiresAt ? new Date(expiresAt) : null;
+
             const [existing] = await pool.execute(
-                'SELECT id FROM file_shares WHERE file_id = ? AND shared_with_user_id = ? AND (expires_at IS NULL OR expires_at > NOW())',
+                'SELECT id FROM file_shares WHERE file_id = ? AND shared_with_user_id = ?',
                 [fileId, userId]
             );
 
             if (existing.length > 0) {
+                await pool.execute(
+                    'UPDATE file_shares SET expires_at = ? WHERE id = ?',
+                    [expiresAtValue, existing[0].id]
+                );
+
+                await pool.execute(
+                    'INSERT INTO audit_log (file_id, user_id, action, role) VALUES (?, ?, ?, ?)',
+                    [fileId, req.user.id, 'share_updated', 'owner']
+                );
+
                 alreadyShared.push({ id: userId, username: users[0].username });
-                continue;
+            } else {
+                const [result] = await pool.execute(
+                    `INSERT INTO file_shares (file_id, owner_id, shared_with_user_id, expires_at) 
+                     VALUES (?, ?, ?, ?)`,
+                    [fileId, req.user.id, userId, expiresAtValue]
+                );
+
+                await pool.execute(
+                    'INSERT INTO audit_log (file_id, user_id, action, role) VALUES (?, ?, ?, ?)',
+                    [fileId, req.user.id, 'share', 'owner']
+                );
+
+                shares.push(result.insertId);
             }
-
-            const expiresAtValue = expiresAt ? new Date(expiresAt) : null;
-
-            const [result] = await pool.execute(
-                `INSERT INTO file_shares (file_id, owner_id, shared_with_user_id, expires_at) 
-                 VALUES (?, ?, ?, ?)`,
-                [fileId, req.user.id, userId, expiresAtValue]
-            );
-
-            await pool.execute(
-                'INSERT INTO audit_log (file_id, user_id, action, role) VALUES (?, ?, ?, ?)',
-                [fileId, req.user.id, 'share', 'owner']
-            );
-
-            shares.push(result.insertId);
-        }
-
-        if (shares.length === 0 && alreadyShared.length > 0) {
-            return res.status(400).json({
-                error: 'File is already shared with all selected users',
-                alreadyShared: alreadyShared
-            });
         }
 
         res.json({
             message: 'File shared successfully',
             sharesCreated: shares.length,
-            alreadyShared: alreadyShared.length > 0 ? alreadyShared : undefined
+            sharesUpdated: alreadyShared.length,
+            updatedUsers: alreadyShared.length > 0 ? alreadyShared : undefined
         });
     } catch (error) {
         console.error('Share error:', error);
@@ -254,24 +257,43 @@ router.post('/:fileId/share-link', authenticate, checkFileAccess, async (req, re
         const { fileId } = req.params;
         const { expiresAt } = req.body;
 
-        const shareToken = uuidv4();
         const expiresAtValue = expiresAt ? new Date(expiresAt) : null;
 
-        await pool.execute(
-            `INSERT INTO file_shares (file_id, owner_id, share_token, expires_at) 
-             VALUES (?, ?, ?, ?)`,
-            [fileId, req.user.id, shareToken, expiresAtValue]
+        const [existingShares] = await pool.execute(
+            `SELECT id, share_token FROM file_shares 
+             WHERE file_id = ? AND share_token IS NOT NULL AND shared_with_user_id IS NULL`,
+            [fileId]
         );
+
+        let shareToken;
+        let isUpdate = false;
+
+        if (existingShares.length > 0) {
+            shareToken = existingShares[0].share_token;
+            isUpdate = true;
+
+            await pool.execute(
+                `UPDATE file_shares SET expires_at = ? WHERE id = ?`,
+                [expiresAtValue, existingShares[0].id]
+            );
+        } else {
+            shareToken = uuidv4();
+            await pool.execute(
+                `INSERT INTO file_shares (file_id, owner_id, share_token, expires_at) 
+                 VALUES (?, ?, ?, ?)`,
+                [fileId, req.user.id, shareToken, expiresAtValue]
+            );
+        }
 
         await pool.execute(
             'INSERT INTO audit_log (file_id, user_id, action, role) VALUES (?, ?, ?, ?)',
-            [fileId, req.user.id, 'share_link', 'owner']
+            [fileId, req.user.id, isUpdate ? 'share_link_updated' : 'share_link', 'owner']
         );
 
         const shareUrl = `${req.protocol}://${req.get('host')}/api/files/share/${shareToken}/download`;
 
         res.json({
-            message: 'Share link created',
+            message: isUpdate ? 'Share link updated' : 'Share link created',
             shareToken,
             shareUrl,
             expiresAt: expiresAtValue
