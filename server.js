@@ -29,12 +29,8 @@ app.use((err, req, res, next) => {
 
 async function testDatabaseConnection() {
     try {
-        console.log('Testing database connection...');
-        console.log('Database config:', {
-            host: process.env.DB_HOST || 'localhost',
-            user: process.env.DB_USER || 'root',
-            database: process.env.DB_NAME || 'file_sharing_db'
-        });
+        
+        
 
         const [rows] = await pool.execute('SELECT 1 as test');
         console.log('Database connection successful!');

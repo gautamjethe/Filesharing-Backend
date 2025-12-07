@@ -1,5 +1,4 @@
-CREATE DATABASE IF NOT EXISTS file_sharing_db;
-USE file_sharing_db;
+
 
 CREATE TABLE IF NOT EXISTS users (
     id INT AUTO_INCREMENT PRIMARY KEY,
