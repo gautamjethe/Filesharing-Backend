@@ -41,7 +41,5 @@ npm start
 - `server.js` - Express app entry point
 - `database.sql` - Database schema
 
-## API Documentation
 
-See main README.md for API endpoints.
 
